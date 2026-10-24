@@ -5,9 +5,10 @@ use super::dap_command::{
     self, Attach, ConfigurationDone, ContinueCommand, DataBreakpointInfoCommand, DisconnectCommand,
     EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
     ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
-    ScopesCommand, SetDataBreakpointsCommand, SetExceptionBreakpoints, SetVariableValueCommand,
-    StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
-    TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
+    ScopesCommand, SetDataBreakpointsCommand, SetExceptionBreakpoints,
+    SetInstructionBreakpointsCommand, SetVariableValueCommand, StackTraceCommand, StepBackCommand,
+    StepCommand, StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand,
+    ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
 use crate::debugger::breakpoint_store::BreakpointSessionState;
@@ -149,6 +150,14 @@ pub struct DataBreakpointState {
     pub dap: dap::DataBreakpoint,
     pub is_enabled: bool,
     pub context: Arc<DataBreakpointContext>,
+}
+
+/// A breakpoint on one instruction, set from the disassembly.
+#[derive(Clone, Debug, Default)]
+pub struct InstructionBreakpointState {
+    /// What the adapter answered: whether it set the breakpoint (`None` until it answered).
+    pub verified: Option<bool>,
+    pub message: Option<String>,
 }
 
 pub enum SessionState {
@@ -708,6 +717,8 @@ pub struct Session {
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     data_breakpoints: BTreeMap<String, DataBreakpointState>,
+    /// Keyed by the instruction reference (the address as the adapter wrote it).
+    instruction_breakpoints: BTreeMap<String, InstructionBreakpointState>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: SharedTaskContext,
@@ -882,6 +893,7 @@ impl Session {
                 ignore_breakpoints: false,
                 breakpoint_store,
                 data_breakpoints: Default::default(),
+                instruction_breakpoints: Default::default(),
                 exception_breakpoints: Default::default(),
                 label,
                 adapter,
@@ -2110,6 +2122,80 @@ impl Session {
             );
         }
         self.send_data_breakpoints(cx);
+    }
+
+    pub fn instruction_breakpoints(
+        &self,
+    ) -> impl Iterator<Item = (&String, &InstructionBreakpointState)> {
+        self.instruction_breakpoints.iter()
+    }
+
+    pub fn instruction_breakpoint(&self, reference: &str) -> Option<&InstructionBreakpointState> {
+        self.instruction_breakpoints.get(reference)
+    }
+
+    /// Sets a breakpoint on the instruction at `reference` (an address the adapter handed out),
+    /// or removes the one there.
+    pub fn toggle_instruction_breakpoint(&mut self, reference: String, cx: &mut Context<Self>) {
+        if self.instruction_breakpoints.remove(&reference).is_none() {
+            self.instruction_breakpoints
+                .insert(reference, InstructionBreakpointState::default());
+        }
+        cx.notify();
+        self.send_instruction_breakpoints(cx);
+    }
+
+    /// Sends every instruction breakpoint (the request replaces the adapter's set), and notes
+    /// which ones the adapter set.
+    fn send_instruction_breakpoints(&mut self, cx: &mut Context<Self>) {
+        let Some(mode) = self.as_running() else {
+            return;
+        };
+        let references = self
+            .instruction_breakpoints
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let command = SetInstructionBreakpointsCommand {
+            breakpoints: references
+                .iter()
+                .map(|reference| dap::InstructionBreakpoint {
+                    instruction_reference: reference.clone(),
+                    offset: None,
+                    condition: None,
+                    hit_condition: None,
+                    mode: None,
+                })
+                .collect(),
+        };
+        let request = mode.request(command);
+        cx.spawn(async move |this, cx| {
+            let response = request.await;
+            this.update(cx, |this, cx| {
+                match response {
+                    Ok(breakpoints) => {
+                        for (reference, breakpoint) in references.iter().zip(breakpoints) {
+                            if let Some(state) = this.instruction_breakpoints.get_mut(reference) {
+                                state.verified = Some(breakpoint.verified);
+                                state.message = breakpoint.message;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        log::error!("Setting instruction breakpoints failed: {error:#}");
+                        for reference in &references {
+                            if let Some(state) = this.instruction_breakpoints.get_mut(reference) {
+                                state.verified = Some(false);
+                                state.message = Some(format!("{error:#}"));
+                            }
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn breakpoints_enabled(&self) -> bool {

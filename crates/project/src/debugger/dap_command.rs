@@ -1792,6 +1792,35 @@ impl LocalDapCommand for SetDataBreakpointsCommand {
     }
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct SetInstructionBreakpointsCommand {
+    pub breakpoints: Vec<dap::InstructionBreakpoint>,
+}
+
+impl LocalDapCommand for SetInstructionBreakpointsCommand {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetInstructionBreakpoints;
+
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_instruction_breakpoints
+            .unwrap_or(false)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::SetInstructionBreakpointsArguments {
+            breakpoints: self.breakpoints.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints)
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub(super) enum SetExceptionBreakpoints {
     Plain {

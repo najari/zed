@@ -879,8 +879,14 @@ impl RunningState {
             )
         });
 
-        let disassembly_view =
-            cx.new(|cx| DisassemblyView::new(session.clone(), stack_frame_list.clone(), cx));
+        let disassembly_view = cx.new(|cx| {
+            DisassemblyView::new(
+                session.clone(),
+                weak_state.clone(),
+                stack_frame_list.clone(),
+                cx,
+            )
+        });
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
