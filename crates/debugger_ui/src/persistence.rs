@@ -11,7 +11,8 @@ use workspace::{Member, Pane, PaneAxis, Workspace};
 
 use crate::session::running::{
     self, DebugTerminal, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
-    loaded_source_list::LoadedSourceList, memory_view::MemoryView, module_list::ModuleList,
+    disassembly_view::DisassemblyView, loaded_source_list::LoadedSourceList,
+    memory_view::MemoryView, module_list::ModuleList,
     stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
@@ -25,6 +26,7 @@ pub(crate) enum DebuggerPaneItem {
     LoadedSources,
     Terminal,
     MemoryView,
+    Disassembly,
 }
 
 impl DebuggerPaneItem {
@@ -38,6 +40,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::LoadedSources,
             DebuggerPaneItem::Terminal,
             DebuggerPaneItem::MemoryView,
+            DebuggerPaneItem::Disassembly,
         ];
         VARIANTS
     }
@@ -47,6 +50,9 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::Modules => capabilities.supports_modules_request.unwrap_or_default(),
             DebuggerPaneItem::MemoryView => capabilities
                 .supports_read_memory_request
+                .unwrap_or_default(),
+            DebuggerPaneItem::Disassembly => capabilities
+                .supports_disassemble_request
                 .unwrap_or_default(),
             DebuggerPaneItem::LoadedSources => capabilities
                 .supports_loaded_sources_request
@@ -65,6 +71,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::LoadedSources => SharedString::new_static("Sources"),
             DebuggerPaneItem::Terminal => SharedString::new_static("Terminal"),
             DebuggerPaneItem::MemoryView => SharedString::new_static("Memory View"),
+            DebuggerPaneItem::Disassembly => SharedString::new_static("Disassembly"),
         }
     }
     pub(crate) fn tab_tooltip(self) -> SharedString {
@@ -87,6 +94,9 @@ impl DebuggerPaneItem {
                 "Provides an interactive terminal session within the debugging environment"
             }
             DebuggerPaneItem::MemoryView => "Allows inspection of memory contents",
+            DebuggerPaneItem::Disassembly => {
+                "Shows the instructions around the program counter of the selected stack frame"
+            }
         };
         SharedString::new_static(tooltip)
     }
@@ -212,6 +222,7 @@ pub(crate) fn deserialize_pane_layout(
     loaded_sources: &Entity<LoadedSourceList>,
     terminal: &Entity<DebugTerminal>,
     memory_view: &Entity<MemoryView>,
+    disassembly_view: &Entity<DisassemblyView>,
     subscriptions: &mut HashMap<EntityId, Subscription>,
     window: &mut Window,
     cx: &mut Context<RunningState>,
@@ -237,6 +248,7 @@ pub(crate) fn deserialize_pane_layout(
                     loaded_sources,
                     terminal,
                     memory_view,
+                    disassembly_view,
                     subscriptions,
                     window,
                     cx,
@@ -329,6 +341,14 @@ pub(crate) fn deserialize_pane_layout(
                         memory_view.focus_handle(cx),
                         memory_view.clone().into(),
                         DebuggerPaneItem::MemoryView,
+                        running_state.clone(),
+                        pane_handle.clone(),
+                        cx,
+                    )),
+                    DebuggerPaneItem::Disassembly => Box::new(SubView::new(
+                        disassembly_view.focus_handle(cx),
+                        disassembly_view.clone().into(),
+                        DebuggerPaneItem::Disassembly,
                         running_state.clone(),
                         pane_handle.clone(),
                         cx,

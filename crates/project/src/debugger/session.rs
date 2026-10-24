@@ -1921,6 +1921,29 @@ impl Session {
         )
         .detach();
     }
+
+    /// Disassembles `instruction_count` instructions around `memory_reference` (an address the
+    /// adapter handed out, such as a stack frame's `instructionPointerReference`), starting
+    /// `instruction_offset` instructions from it (negative: before it).
+    pub fn disassemble(
+        &mut self,
+        memory_reference: String,
+        instruction_offset: i64,
+        instruction_count: u64,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Vec<dap::DisassembledInstruction>>> {
+        self.request(
+            crate::debugger::dap_command::DisassembleSignedArguments {
+                memory_reference,
+                instruction_offset,
+                instruction_count,
+                resolve_symbols: true,
+            },
+            |_, response, _| response.log_err(),
+            cx,
+        )
+    }
+
     pub fn read_memory(
         &mut self,
         range: RangeInclusive<u64>,

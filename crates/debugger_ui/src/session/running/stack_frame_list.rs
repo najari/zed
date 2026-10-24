@@ -216,6 +216,31 @@ impl StackFrameList {
         self.opened_stack_frame_id
     }
 
+    /// The stack frame that is open in the editor, if it is in the list.
+    pub(crate) fn opened_stack_frame(&self) -> Option<dap::StackFrame> {
+        let id = self.opened_stack_frame_id?;
+        self.entries
+            .iter()
+            .flat_map(|entry| match entry {
+                StackFrameEntry::Normal(frame) | StackFrameEntry::Label(frame) => {
+                    std::slice::from_ref(frame)
+                }
+                StackFrameEntry::Collapsed(frames) => frames.as_slice(),
+            })
+            .find(|frame| frame.id == id)
+            .cloned()
+    }
+
+    /// The opened stack frame, else the first frame of the list.
+    pub(crate) fn current_stack_frame(&self) -> Option<dap::StackFrame> {
+        self.opened_stack_frame().or_else(|| {
+            self.entries.iter().find_map(|entry| match entry {
+                StackFrameEntry::Normal(frame) => Some(frame.clone()),
+                _ => None,
+            })
+        })
+    }
+
     pub(super) fn schedule_refresh(
         &mut self,
         select_first: bool,

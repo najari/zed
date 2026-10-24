@@ -1,5 +1,6 @@
 pub(crate) mod breakpoint_list;
 pub(crate) mod console;
+pub(crate) mod disassembly_view;
 pub(crate) mod loaded_source_list;
 pub(crate) mod memory_view;
 pub(crate) mod module_list;
@@ -17,7 +18,7 @@ use crate::{
     attach_modal::{AttachModal, ModalIntent},
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
-    session::running::memory_view::MemoryView,
+    session::running::{disassembly_view::DisassemblyView, memory_view::MemoryView},
 };
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -89,6 +90,7 @@ pub struct RunningState {
     pub(crate) scenario: Option<DebugScenario>,
     pub(crate) scenario_context: Option<DebugScenarioContext>,
     memory_view: Entity<MemoryView>,
+    disassembly_view: Entity<DisassemblyView>,
 }
 
 impl RunningState {
@@ -877,6 +879,9 @@ impl RunningState {
             )
         });
 
+        let disassembly_view =
+            cx.new(|cx| DisassemblyView::new(session.clone(), stack_frame_list.clone(), cx));
+
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
         let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
@@ -988,6 +993,7 @@ impl RunningState {
                 &loaded_source_list,
                 &debug_terminal,
                 &memory_view,
+                &disassembly_view,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -1017,6 +1023,7 @@ impl RunningState {
 
         Self {
             memory_view,
+            disassembly_view,
             session,
             workspace,
             project: weak_project,
@@ -1488,6 +1495,14 @@ impl RunningState {
             DebuggerPaneItem::MemoryView => Box::new(SubView::new(
                 self.memory_view.focus_handle(cx),
                 self.memory_view.clone().into(),
+                item_kind,
+                running_state,
+                host_pane,
+                cx,
+            )),
+            DebuggerPaneItem::Disassembly => Box::new(SubView::new(
+                self.disassembly_view.focus_handle(cx),
+                self.disassembly_view.clone().into(),
                 item_kind,
                 running_state,
                 host_pane,

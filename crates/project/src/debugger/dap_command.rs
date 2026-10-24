@@ -1973,3 +1973,48 @@ impl LocalDapCommand for dap::WriteMemoryArguments {
         Ok(message)
     }
 }
+
+/// Arguments of a `disassemble` request with signed offsets. DAP allows negative offsets (to get
+/// the instructions before the reference), but `dap::DisassembleArguments` has them unsigned.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DisassembleSignedArguments {
+    #[serde(rename = "memoryReference")]
+    pub memory_reference: String,
+    #[serde(rename = "instructionOffset")]
+    pub instruction_offset: i64,
+    #[serde(rename = "instructionCount")]
+    pub instruction_count: u64,
+    #[serde(rename = "resolveSymbols")]
+    pub resolve_symbols: bool,
+}
+
+/// The DAP `disassemble` request, with [`DisassembleSignedArguments`].
+pub enum DisassembleSigned {}
+
+impl dap::requests::Request for DisassembleSigned {
+    const COMMAND: &'static str = "disassemble";
+    type Arguments = DisassembleSignedArguments;
+    type Response = dap::DisassembleResponse;
+}
+
+impl LocalDapCommand for DisassembleSignedArguments {
+    type Response = Vec<dap::DisassembledInstruction>;
+    type DapRequest = DisassembleSigned;
+
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_disassemble_request
+            .unwrap_or_default()
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        self.clone()
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.instructions)
+    }
+}
