@@ -31,6 +31,13 @@ pub(crate) struct DisassemblyView {
     /// every stop, so an old frame (still listed right after a stop) is not asked for again.
     frame_id: Option<dap::StackFrameId>,
     pc: Option<u64>,
+    /// The frame's instruction pointer reference, which the instructions were asked around.
+    /// Reading more asks around it too (with larger offsets): the adapter may route the
+    /// reference (to a core, say), and a plain address of a shown instruction would lose that.
+    reference: Option<String>,
+    /// The instruction offsets, from the reference, of the first and the last shown
+    /// instruction.
+    offsets: (i64, i64),
     instructions: Vec<DisassembledInstruction>,
     message: Option<SharedString>,
     /// Bring the program counter into view at the next render (the list has no layout before
@@ -42,13 +49,19 @@ pub(crate) struct DisassemblyView {
     _subscriptions: Vec<Subscription>,
 }
 
-/// An address as DAP writes it: hex with `0x`, else decimal.
+/// An address as DAP writes it: hex with `0x`, else decimal. A memory reference is opaque to
+/// the client, but adapters write the address first, some with more after it (probe-rs adds
+/// `@core` in a session of several cores): the leading number is the address.
 fn parse_address(text: &str) -> Option<u64> {
     let text = text.trim();
-    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-        Some(hex) => u64::from_str_radix(hex, 16).ok(),
-        None => text.parse().ok(),
-    }
+    let (digits, radix) = match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => (hex, 16),
+        None => (text, 10),
+    };
+    let end = digits
+        .find(|c: char| !c.is_digit(radix))
+        .unwrap_or(digits.len());
+    u64::from_str_radix(&digits[..end], radix).ok()
 }
 
 #[derive(Clone, Copy)]
@@ -80,6 +93,8 @@ impl DisassemblyView {
             list: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             frame_id: None,
             pc: None,
+            reference: None,
+            offsets: (0, 0),
             instructions: Vec::new(),
             message: Some("Not stopped".into()),
             scroll_to_pc: false,
@@ -104,12 +119,14 @@ impl DisassemblyView {
         self.frame_id = Some(frame.id);
         let Some(reference) = frame.instruction_pointer_reference.clone() else {
             self.message = Some("The stack frame has no instruction pointer".into());
+            self.reference = None;
             self.instructions.clear();
             self.list.reset(0);
             cx.notify();
             return;
         };
         self.pc = parse_address(&reference);
+        self.reference = Some(reference.clone());
         self._fetch_more = Task::ready(());
         let request = self.session.update(cx, |session, cx| {
             session.disassemble(reference, -BEFORE, COUNT, cx)
@@ -127,6 +144,7 @@ impl DisassemblyView {
                         this.instructions.clear();
                     }
                 }
+                this.offsets = (-BEFORE, -BEFORE + this.instructions.len() as i64 - 1);
                 this.list.reset(this.instructions.len());
                 this.scroll_to_pc = true;
                 cx.notify();
@@ -148,10 +166,12 @@ impl DisassemblyView {
         let Some(edge_address) = parse_address(&edge.address) else {
             return;
         };
-        let reference = edge.address.clone();
+        let Some(reference) = self.reference.clone() else {
+            return;
+        };
         let offset = match side {
-            Side::Before => -(MORE as i64),
-            Side::After => 1,
+            Side::Before => self.offsets.0 - MORE as i64,
+            Side::After => self.offsets.1 + 1,
         };
         let request = self.session.update(cx, |session, cx| {
             session.disassemble(reference, offset, MORE, cx)
@@ -170,6 +190,11 @@ impl DisassemblyView {
                         Side::After => address > edge_address,
                     })
                 };
+                let received = instructions.len() as i64;
+                match side {
+                    Side::Before => this.offsets.0 -= received,
+                    Side::After => this.offsets.1 += received,
+                }
                 let new = instructions.into_iter().filter(beyond).collect::<Vec<_>>();
                 let count = new.len();
                 match side {
@@ -445,5 +470,18 @@ impl Render for DisassemblyView {
                     .size_full(),
                 ),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_address;
+
+    #[test]
+    fn addresses_are_read_from_references() {
+        assert_eq!(parse_address("0x8021C028"), Some(0x8021_c028));
+        assert_eq!(parse_address("0x8003a552@1"), Some(0x8003_a552));
+        assert_eq!(parse_address("4096"), Some(4096));
+        assert_eq!(parse_address("frame-7"), None);
     }
 }
