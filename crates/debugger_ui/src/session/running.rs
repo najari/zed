@@ -5,6 +5,7 @@ pub(crate) mod live_watch;
 pub(crate) mod loaded_source_list;
 pub(crate) mod memory_view;
 pub(crate) mod module_list;
+pub(crate) mod rtt_view;
 pub mod stack_frame_list;
 pub mod variable_list;
 use std::{
@@ -21,6 +22,7 @@ use crate::{
     persistence::{self, DebuggerPaneItem, SerializedLayout},
     session::running::{
         disassembly_view::DisassemblyView, live_watch::LiveWatchView, memory_view::MemoryView,
+        rtt_view::RttView,
     },
 };
 
@@ -95,6 +97,7 @@ pub struct RunningState {
     memory_view: Entity<MemoryView>,
     disassembly_view: Entity<DisassemblyView>,
     live_watch: Entity<LiveWatchView>,
+    rtt_view: Entity<RttView>,
 }
 
 impl RunningState {
@@ -892,6 +895,7 @@ impl RunningState {
             )
         });
         let live_watch = cx.new(|cx| LiveWatchView::new(session.clone(), window, cx));
+        let rtt_view = cx.new(|cx| RttView::new(session.clone(), cx));
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
@@ -1006,6 +1010,7 @@ impl RunningState {
                 &memory_view,
                 &disassembly_view,
                 &live_watch,
+                &rtt_view,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -1037,6 +1042,7 @@ impl RunningState {
             memory_view,
             disassembly_view,
             live_watch,
+            rtt_view,
             session,
             workspace,
             project: weak_project,
@@ -1524,6 +1530,14 @@ impl RunningState {
             DebuggerPaneItem::LiveWatch => Box::new(SubView::new(
                 self.live_watch.focus_handle(cx),
                 self.live_watch.clone().into(),
+                item_kind,
+                running_state,
+                host_pane,
+                cx,
+            )),
+            DebuggerPaneItem::Rtt => Box::new(SubView::new(
+                self.rtt_view.focus_handle(cx),
+                self.rtt_view.clone().into(),
                 item_kind,
                 running_state,
                 host_pane,

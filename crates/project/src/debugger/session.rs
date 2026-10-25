@@ -152,6 +152,24 @@ pub struct DataBreakpointState {
     pub context: Arc<DataBreakpointContext>,
 }
 
+/// The lines an RTT channel kept, at most this many (the oldest go first).
+const MAX_RTT_LINES: usize = 10_000;
+
+/// An RTT up channel the adapter announced (probe-rs `probe-rs-rtt-channel-config` event), with
+/// the text it sent (`probe-rs-rtt-data` events).
+#[derive(Clone, Debug, Default)]
+pub struct RttChannel {
+    pub number: u32,
+    pub name: String,
+    pub data_format: String,
+    /// Complete lines.
+    pub lines: VecDeque<String>,
+    /// The text after the last line break.
+    pub partial: String,
+    /// The lines dropped from the front (to keep at most `MAX_RTT_LINES`).
+    pub dropped: usize,
+}
+
 /// A breakpoint on one instruction, set from the disassembly.
 #[derive(Clone, Debug, Default)]
 pub struct InstructionBreakpointState {
@@ -719,6 +737,7 @@ pub struct Session {
     data_breakpoints: BTreeMap<String, DataBreakpointState>,
     /// Keyed by the instruction reference (the address as the adapter wrote it).
     instruction_breakpoints: BTreeMap<String, InstructionBreakpointState>,
+    rtt_channels: Vec<RttChannel>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: SharedTaskContext,
@@ -894,6 +913,7 @@ impl Session {
                 breakpoint_store,
                 data_breakpoints: Default::default(),
                 instruction_breakpoints: Default::default(),
+                rtt_channels: Vec::new(),
                 exception_breakpoints: Default::default(),
                 label,
                 adapter,
@@ -1665,6 +1685,10 @@ impl Session {
                         return;
                     };
                     self.kill_browser(request, cx);
+                } else if event.event == "probe-rs-rtt-channel-config" {
+                    self.open_rtt_channel(&event.body, cx);
+                } else if event.event == "probe-rs-rtt-data" {
+                    self.push_rtt_data(&event.body, cx);
                 }
             }
         }
@@ -2122,6 +2146,95 @@ impl Session {
             );
         }
         self.send_data_breakpoints(cx);
+    }
+
+    pub fn rtt_channels(&self) -> &[RttChannel] {
+        &self.rtt_channels
+    }
+
+    pub fn clear_rtt_channel(&mut self, number: u32, cx: &mut Context<Self>) {
+        if let Some(channel) = self.rtt_channels.iter_mut().find(|c| c.number == number) {
+            channel.dropped += channel.lines.len();
+            channel.lines.clear();
+            channel.partial.clear();
+            cx.notify();
+        }
+    }
+
+    /// A channel the adapter announced: noted, and the adapter is told that it is shown (probe-rs
+    /// sends the data of a channel only then).
+    fn open_rtt_channel(&mut self, body: &serde_json::Value, cx: &mut Context<Self>) {
+        let Some(number) = body
+            .get("channelNumber")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+        else {
+            log::error!("probe-rs-rtt-channel-config without a channel number");
+            return;
+        };
+        let text = |key: &str| {
+            body.get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        match self.rtt_channels.iter_mut().find(|c| c.number == number) {
+            Some(channel) => {
+                channel.name = text("channelName");
+                channel.data_format = text("dataFormat");
+            }
+            None => self.rtt_channels.push(RttChannel {
+                number,
+                name: text("channelName"),
+                data_format: text("dataFormat"),
+                ..Default::default()
+            }),
+        }
+        if let Some(mode) = self.as_running() {
+            mode.request(crate::debugger::dap_command::RttWindowOpenedArguments {
+                channel_number: number,
+                window_is_open: true,
+            })
+            .detach_and_log_err(cx);
+        }
+        cx.notify();
+    }
+
+    fn push_rtt_data(&mut self, body: &serde_json::Value, cx: &mut Context<Self>) {
+        let number = body
+            .get("channelNumber")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok());
+        let data = body.get("data").and_then(serde_json::Value::as_str);
+        let (Some(number), Some(data)) = (number, data) else {
+            return;
+        };
+        let index = match self.rtt_channels.iter().position(|c| c.number == number) {
+            Some(index) => index,
+            None => {
+                self.rtt_channels.push(RttChannel {
+                    number,
+                    ..Default::default()
+                });
+                self.rtt_channels.len() - 1
+            }
+        };
+        let channel = &mut self.rtt_channels[index];
+        let mut text = std::mem::take(&mut channel.partial);
+        text.push_str(data);
+        let mut rest = text.as_str();
+        while let Some(end) = rest.find('\n') {
+            channel
+                .lines
+                .push_back(rest[..end].trim_end_matches('\r').to_string());
+            rest = &rest[end + 1..];
+        }
+        channel.partial = rest.to_string();
+        while channel.lines.len() > MAX_RTT_LINES {
+            channel.lines.pop_front();
+            channel.dropped += 1;
+        }
+        cx.notify();
     }
 
     /// Reads `expressions` (global variables) without halting the target, with the probe-rs

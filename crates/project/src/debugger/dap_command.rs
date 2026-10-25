@@ -2098,3 +2098,38 @@ impl LocalDapCommand for LiveWatchArguments {
         Ok(message.values)
     }
 }
+
+/// Arguments of the probe-rs `rttWindowOpened` request: the client shows the RTT channel, so the
+/// adapter starts sending its data.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RttWindowOpenedArguments {
+    #[serde(rename = "channelNumber")]
+    pub channel_number: u32,
+    #[serde(rename = "windowIsOpen")]
+    pub window_is_open: bool,
+}
+
+/// The probe-rs `rttWindowOpened` request (not part of DAP).
+pub enum RttWindowOpened {}
+
+impl dap::requests::Request for RttWindowOpened {
+    const COMMAND: &'static str = "rttWindowOpened";
+    type Arguments = RttWindowOpenedArguments;
+    type Response = ();
+}
+
+impl LocalDapCommand for RttWindowOpenedArguments {
+    type Response = ();
+    type DapRequest = RttWindowOpened;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        self.clone()
+    }
+
+    fn response_from_dap(
+        &self,
+        _message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(())
+    }
+}

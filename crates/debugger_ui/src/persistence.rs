@@ -13,7 +13,7 @@ use crate::session::running::{
     self, DebugTerminal, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
     disassembly_view::DisassemblyView, live_watch::LiveWatchView,
     loaded_source_list::LoadedSourceList, memory_view::MemoryView, module_list::ModuleList,
-    stack_frame_list::StackFrameList, variable_list::VariableList,
+    rtt_view::RttView, stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
 #[derive(Clone, Hash, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,6 +28,7 @@ pub(crate) enum DebuggerPaneItem {
     MemoryView,
     Disassembly,
     LiveWatch,
+    Rtt,
 }
 
 impl DebuggerPaneItem {
@@ -43,6 +44,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::MemoryView,
             DebuggerPaneItem::Disassembly,
             DebuggerPaneItem::LiveWatch,
+            DebuggerPaneItem::Rtt,
         ];
         VARIANTS
     }
@@ -75,6 +77,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::MemoryView => SharedString::new_static("Memory View"),
             DebuggerPaneItem::Disassembly => SharedString::new_static("Disassembly"),
             DebuggerPaneItem::LiveWatch => SharedString::new_static("Live Watch"),
+            DebuggerPaneItem::Rtt => SharedString::new_static("RTT"),
         }
     }
     pub(crate) fn tab_tooltip(self) -> SharedString {
@@ -103,6 +106,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::LiveWatch => {
                 "Reads global variables while the target runs (probe-rs liveWatch)"
             }
+            DebuggerPaneItem::Rtt => "Shows the text of the target's RTT channels (probe-rs)",
         };
         SharedString::new_static(tooltip)
     }
@@ -230,6 +234,7 @@ pub(crate) fn deserialize_pane_layout(
     memory_view: &Entity<MemoryView>,
     disassembly_view: &Entity<DisassemblyView>,
     live_watch: &Entity<LiveWatchView>,
+    rtt_view: &Entity<RttView>,
     subscriptions: &mut HashMap<EntityId, Subscription>,
     window: &mut Window,
     cx: &mut Context<RunningState>,
@@ -257,6 +262,7 @@ pub(crate) fn deserialize_pane_layout(
                     memory_view,
                     disassembly_view,
                     live_watch,
+                    rtt_view,
                     subscriptions,
                     window,
                     cx,
@@ -365,6 +371,14 @@ pub(crate) fn deserialize_pane_layout(
                         live_watch.focus_handle(cx),
                         live_watch.clone().into(),
                         DebuggerPaneItem::LiveWatch,
+                        running_state.clone(),
+                        pane_handle.clone(),
+                        cx,
+                    )),
+                    DebuggerPaneItem::Rtt => Box::new(SubView::new(
+                        rtt_view.focus_handle(cx),
+                        rtt_view.clone().into(),
+                        DebuggerPaneItem::Rtt,
                         running_state.clone(),
                         pane_handle.clone(),
                         cx,
