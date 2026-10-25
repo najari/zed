@@ -2107,6 +2107,9 @@ pub struct RttWindowOpenedArguments {
     pub channel_number: u32,
     #[serde(rename = "windowIsOpen")]
     pub window_is_open: bool,
+    /// The core of the channel, as its event named it (a session of several cores).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub core: Option<u64>,
 }
 
 /// The probe-rs `rttWindowOpened` request (not part of DAP).

@@ -1,6 +1,7 @@
 //! RTT: the text of the target's RTT up channels, which probe-rs sends with its
 //! `probe-rs-rtt-channel-config` and `probe-rs-rtt-data` events (not part of DAP). The session
-//! keeps the lines; this view shows one channel and follows its end.
+//! keeps the lines; this view shows one channel and follows its end. In a session of several
+//! cores each core has its own channels: a channel is a core and a channel number.
 
 use gpui::{
     AnyElement, Empty, Entity, FocusHandle, Focusable, ListAlignment, ListState, Subscription, list,
@@ -8,14 +9,17 @@ use gpui::{
 use project::debugger::session::Session;
 use ui::{Tooltip, prelude::*};
 
+/// A channel: its core (in a session of several cores) and its number.
+type ChannelKey = (Option<u64>, u32);
+
 pub(crate) struct RttView {
     session: Entity<Session>,
     focus_handle: FocusHandle,
     /// The channel shown (the first one when none was picked).
-    selected: Option<u32>,
+    selected: Option<ChannelKey>,
     list: ListState,
     /// What the list shows: the channel, its dropped lines and its line count.
-    shown: Option<(u32, usize, usize)>,
+    shown: Option<(ChannelKey, usize, usize)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -36,30 +40,34 @@ impl RttView {
         this
     }
 
-    fn channel_number(&self, cx: &App) -> Option<u32> {
+    fn channel_key(&self, cx: &App) -> Option<ChannelKey> {
         let channels = self.session.read(cx).rtt_channels();
         self.selected
-            .filter(|n| channels.iter().any(|c| c.number == *n))
-            .or_else(|| channels.first().map(|c| c.number))
+            .filter(|key| channels.iter().any(|c| (c.core, c.number) == *key))
+            .or_else(|| channels.first().map(|c| (c.core, c.number)))
     }
 
     /// Brings the list up to the session's lines: new lines are added at the end (the list
     /// stays at the end when it was there), anything else starts it again.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let Some(number) = self.channel_number(cx) else {
+        let Some(key) = self.channel_key(cx) else {
             if self.shown.take().is_some() {
                 self.list.reset(0);
             }
             return;
         };
         let session = self.session.read(cx);
-        let Some(channel) = session.rtt_channels().iter().find(|c| c.number == number) else {
+        let Some(channel) = session
+            .rtt_channels()
+            .iter()
+            .find(|c| (c.core, c.number) == key)
+        else {
             return;
         };
-        let now = (number, channel.dropped, channel.lines.len());
+        let now = (key, channel.dropped, channel.lines.len());
         match self.shown {
-            Some((shown_number, dropped, len))
-                if shown_number == number && dropped == now.1 && len <= now.2 =>
+            Some((shown_key, dropped, len))
+                if shown_key == key && dropped == now.1 && len <= now.2 =>
             {
                 if now.2 > len {
                     self.list.splice(len..len, now.2 - len);
@@ -70,21 +78,21 @@ impl RttView {
         self.shown = Some(now);
     }
 
-    fn select(&mut self, number: u32, cx: &mut Context<Self>) {
-        self.selected = Some(number);
+    fn select(&mut self, key: ChannelKey, cx: &mut Context<Self>) {
+        self.selected = Some(key);
         self.sync(cx);
         cx.notify();
     }
 
     fn render_line(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(number) = self.channel_number(cx) else {
+        let Some(key) = self.channel_key(cx) else {
             return Empty.into_any();
         };
         let session = self.session.read(cx);
         let Some(line) = session
             .rtt_channels()
             .iter()
-            .find(|c| c.number == number)
+            .find(|c| (c.core, c.number) == key)
             .and_then(|c| c.lines.get(ix))
         else {
             return Empty.into_any();
@@ -108,7 +116,7 @@ impl Focusable for RttView {
 
 impl Render for RttView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let shown = self.channel_number(cx);
+        let shown = self.channel_key(cx);
         let channels = self
             .session
             .read(cx)
@@ -116,7 +124,7 @@ impl Render for RttView {
             .iter()
             .map(|c| {
                 (
-                    c.number,
+                    (c.core, c.number),
                     c.name.clone(),
                     c.data_format.clone(),
                     c.lines.len(),
@@ -131,28 +139,35 @@ impl Render for RttView {
             .pb_1()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
-            .children(channels.iter().map(|(number, name, format, lines)| {
-                let number = *number;
-                let label = if name.is_empty() {
+            .children(channels.iter().map(|(key, name, format, lines)| {
+                let key = *key;
+                let (core, number) = key;
+                let channel = if name.is_empty() {
                     format!("{number}")
                 } else {
                     format!("{number}: {name}")
                 };
-                Button::new(SharedString::from(format!("rtt-channel-{number}")), label)
+                let label = match core {
+                    Some(core) => format!("core {core} · {channel}"),
+                    None => channel,
+                };
+                let id = format!("rtt-channel-{}-{number}", core.map_or(-1, |c| c as i64));
+                Button::new(SharedString::from(id), label)
                     .label_size(LabelSize::Small)
-                    .toggle_state(shown == Some(number))
+                    .toggle_state(shown == Some(key))
                     .tooltip(Tooltip::text(format!("{format}, {lines} lines")))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(number, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.select(key, cx)))
             }))
             .child(div().flex_1())
-            .when_some(shown, |this, number| {
+            .when_some(shown, |this, (core, number)| {
                 this.child(
                     IconButton::new("rtt-clear", IconName::Trash)
                         .icon_size(IconSize::Small)
                         .tooltip(Tooltip::text("Clear"))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.session
-                                .update(cx, |session, cx| session.clear_rtt_channel(number, cx));
+                            this.session.update(cx, |session, cx| {
+                                session.clear_rtt_channel(core, number, cx)
+                            });
                         })),
                 )
             });

@@ -159,6 +159,9 @@ const MAX_RTT_LINES: usize = 10_000;
 /// the text it sent (`probe-rs-rtt-data` events).
 #[derive(Clone, Debug, Default)]
 pub struct RttChannel {
+    /// The core of the channel in a session of several cores, where each core has its own
+    /// channels (probe-rs names it in the events).
+    pub core: Option<u64>,
     pub number: u32,
     pub name: String,
     pub data_format: String,
@@ -2152,8 +2155,12 @@ impl Session {
         &self.rtt_channels
     }
 
-    pub fn clear_rtt_channel(&mut self, number: u32, cx: &mut Context<Self>) {
-        if let Some(channel) = self.rtt_channels.iter_mut().find(|c| c.number == number) {
+    pub fn clear_rtt_channel(&mut self, core: Option<u64>, number: u32, cx: &mut Context<Self>) {
+        if let Some(channel) = self
+            .rtt_channels
+            .iter_mut()
+            .find(|c| c.core == core && c.number == number)
+        {
             channel.dropped += channel.lines.len();
             channel.lines.clear();
             channel.partial.clear();
@@ -2178,12 +2185,18 @@ impl Session {
                 .unwrap_or_default()
                 .to_string()
         };
-        match self.rtt_channels.iter_mut().find(|c| c.number == number) {
+        let core = body.get("core").and_then(serde_json::Value::as_u64);
+        match self
+            .rtt_channels
+            .iter_mut()
+            .find(|c| c.core == core && c.number == number)
+        {
             Some(channel) => {
                 channel.name = text("channelName");
                 channel.data_format = text("dataFormat");
             }
             None => self.rtt_channels.push(RttChannel {
+                core,
                 number,
                 name: text("channelName"),
                 data_format: text("dataFormat"),
@@ -2194,6 +2207,7 @@ impl Session {
             mode.request(crate::debugger::dap_command::RttWindowOpenedArguments {
                 channel_number: number,
                 window_is_open: true,
+                core,
             })
             .detach_and_log_err(cx);
         }
@@ -2209,10 +2223,16 @@ impl Session {
         let (Some(number), Some(data)) = (number, data) else {
             return;
         };
-        let index = match self.rtt_channels.iter().position(|c| c.number == number) {
+        let core = body.get("core").and_then(serde_json::Value::as_u64);
+        let index = match self
+            .rtt_channels
+            .iter()
+            .position(|c| c.core == core && c.number == number)
+        {
             Some(index) => index,
             None => {
                 self.rtt_channels.push(RttChannel {
+                    core,
                     number,
                     ..Default::default()
                 });
