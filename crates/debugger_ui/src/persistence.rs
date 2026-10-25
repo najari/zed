@@ -11,8 +11,8 @@ use workspace::{Member, Pane, PaneAxis, Workspace};
 
 use crate::session::running::{
     self, DebugTerminal, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
-    disassembly_view::DisassemblyView, loaded_source_list::LoadedSourceList,
-    memory_view::MemoryView, module_list::ModuleList,
+    disassembly_view::DisassemblyView, live_watch::LiveWatchView,
+    loaded_source_list::LoadedSourceList, memory_view::MemoryView, module_list::ModuleList,
     stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
@@ -27,6 +27,7 @@ pub(crate) enum DebuggerPaneItem {
     Terminal,
     MemoryView,
     Disassembly,
+    LiveWatch,
 }
 
 impl DebuggerPaneItem {
@@ -41,6 +42,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::Terminal,
             DebuggerPaneItem::MemoryView,
             DebuggerPaneItem::Disassembly,
+            DebuggerPaneItem::LiveWatch,
         ];
         VARIANTS
     }
@@ -72,6 +74,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::Terminal => SharedString::new_static("Terminal"),
             DebuggerPaneItem::MemoryView => SharedString::new_static("Memory View"),
             DebuggerPaneItem::Disassembly => SharedString::new_static("Disassembly"),
+            DebuggerPaneItem::LiveWatch => SharedString::new_static("Live Watch"),
         }
     }
     pub(crate) fn tab_tooltip(self) -> SharedString {
@@ -96,6 +99,9 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::MemoryView => "Allows inspection of memory contents",
             DebuggerPaneItem::Disassembly => {
                 "Shows the instructions around the program counter of the selected stack frame"
+            }
+            DebuggerPaneItem::LiveWatch => {
+                "Reads global variables while the target runs (probe-rs liveWatch)"
             }
         };
         SharedString::new_static(tooltip)
@@ -223,6 +229,7 @@ pub(crate) fn deserialize_pane_layout(
     terminal: &Entity<DebugTerminal>,
     memory_view: &Entity<MemoryView>,
     disassembly_view: &Entity<DisassemblyView>,
+    live_watch: &Entity<LiveWatchView>,
     subscriptions: &mut HashMap<EntityId, Subscription>,
     window: &mut Window,
     cx: &mut Context<RunningState>,
@@ -249,6 +256,7 @@ pub(crate) fn deserialize_pane_layout(
                     terminal,
                     memory_view,
                     disassembly_view,
+                    live_watch,
                     subscriptions,
                     window,
                     cx,
@@ -349,6 +357,14 @@ pub(crate) fn deserialize_pane_layout(
                         disassembly_view.focus_handle(cx),
                         disassembly_view.clone().into(),
                         DebuggerPaneItem::Disassembly,
+                        running_state.clone(),
+                        pane_handle.clone(),
+                        cx,
+                    )),
+                    DebuggerPaneItem::LiveWatch => Box::new(SubView::new(
+                        live_watch.focus_handle(cx),
+                        live_watch.clone().into(),
+                        DebuggerPaneItem::LiveWatch,
                         running_state.clone(),
                         pane_handle.clone(),
                         cx,

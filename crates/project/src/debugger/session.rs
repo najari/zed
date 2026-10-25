@@ -2124,6 +2124,21 @@ impl Session {
         self.send_data_breakpoints(cx);
     }
 
+    /// Reads `expressions` (global variables) without halting the target, with the probe-rs
+    /// `liveWatch` request; `core` picks the core in a session of several cores.
+    pub fn live_watch(
+        &self,
+        expressions: Vec<String>,
+        core: Option<u64>,
+    ) -> Task<Result<Vec<crate::debugger::dap_command::LiveWatchValue>>> {
+        match self.as_running() {
+            Some(mode) => {
+                mode.request(crate::debugger::dap_command::LiveWatchArguments { expressions, core })
+            }
+            None => Task::ready(Err(anyhow!("The debug session is not running"))),
+        }
+    }
+
     pub fn instruction_breakpoints(
         &self,
     ) -> impl Iterator<Item = (&String, &InstructionBreakpointState)> {

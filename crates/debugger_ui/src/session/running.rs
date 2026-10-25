@@ -1,6 +1,7 @@
 pub(crate) mod breakpoint_list;
 pub(crate) mod console;
 pub(crate) mod disassembly_view;
+pub(crate) mod live_watch;
 pub(crate) mod loaded_source_list;
 pub(crate) mod memory_view;
 pub(crate) mod module_list;
@@ -18,7 +19,9 @@ use crate::{
     attach_modal::{AttachModal, ModalIntent},
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
-    session::running::{disassembly_view::DisassemblyView, memory_view::MemoryView},
+    session::running::{
+        disassembly_view::DisassemblyView, live_watch::LiveWatchView, memory_view::MemoryView,
+    },
 };
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -91,6 +94,7 @@ pub struct RunningState {
     pub(crate) scenario_context: Option<DebugScenarioContext>,
     memory_view: Entity<MemoryView>,
     disassembly_view: Entity<DisassemblyView>,
+    live_watch: Entity<LiveWatchView>,
 }
 
 impl RunningState {
@@ -887,6 +891,7 @@ impl RunningState {
                 cx,
             )
         });
+        let live_watch = cx.new(|cx| LiveWatchView::new(session.clone(), window, cx));
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
@@ -1000,6 +1005,7 @@ impl RunningState {
                 &debug_terminal,
                 &memory_view,
                 &disassembly_view,
+                &live_watch,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -1030,6 +1036,7 @@ impl RunningState {
         Self {
             memory_view,
             disassembly_view,
+            live_watch,
             session,
             workspace,
             project: weak_project,
@@ -1509,6 +1516,14 @@ impl RunningState {
             DebuggerPaneItem::Disassembly => Box::new(SubView::new(
                 self.disassembly_view.focus_handle(cx),
                 self.disassembly_view.clone().into(),
+                item_kind,
+                running_state,
+                host_pane,
+                cx,
+            )),
+            DebuggerPaneItem::LiveWatch => Box::new(SubView::new(
+                self.live_watch.focus_handle(cx),
+                self.live_watch.clone().into(),
                 item_kind,
                 running_state,
                 host_pane,

@@ -2047,3 +2047,54 @@ impl LocalDapCommand for DisassembleSignedArguments {
         Ok(message.instructions)
     }
 }
+
+/// Arguments of the probe-rs `liveWatch` request: global variables read while the target runs.
+/// `core` picks the core in a session of several cores (probe-rs routes on it).
+#[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LiveWatchArguments {
+    pub expressions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub core: Option<u64>,
+}
+
+/// The value of one expression of a `liveWatch` request, or why it could not be read.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LiveWatchValue {
+    pub expression: String,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(rename = "type", default)]
+    pub type_: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct LiveWatchResponse {
+    pub values: Vec<LiveWatchValue>,
+}
+
+/// The probe-rs `liveWatch` request (not part of DAP).
+pub enum LiveWatch {}
+
+impl dap::requests::Request for LiveWatch {
+    const COMMAND: &'static str = "liveWatch";
+    type Arguments = LiveWatchArguments;
+    type Response = LiveWatchResponse;
+}
+
+impl LocalDapCommand for LiveWatchArguments {
+    type Response = Vec<LiveWatchValue>;
+    type DapRequest = LiveWatch;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        self.clone()
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.values)
+    }
+}

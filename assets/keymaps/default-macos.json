@@ -1476,6 +1476,13 @@
     },
   },
   {
+    "context": "LiveWatch > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "RunModal",
     "use_key_equivalents": true,
     "bindings": {
